@@ -87,6 +87,7 @@ void RoutingProtocolImpl::handle_alarm(void *data)
       NeighborInfo &neighbor = it->second;
       if (current_time - neighbor.last_response_time > 15000)
       {                           // no response more than 15 seconds
+        // cout << "Neighbor on port " << it->first << " with ID " << neighbor.neighbor_id << " has timed out and will be removed." << endl;
         it = neighbors.erase(it); // remove expired neighbor
       }
       else
@@ -96,14 +97,14 @@ void RoutingProtocolImpl::handle_alarm(void *data)
     }
 
     // print neighbors
-    cout << "Current Neighbors:" << endl;
-    for (const auto &entry : neighbors)
-    {
-      cout << "Port: " << entry.first
-           << ", Neighbor ID: " << entry.second.neighbor_id
-           << ", Last Response Time: " << entry.second.last_response_time
-           << ", RTT: " << entry.second.rtt << " ms" << endl;
-    }
+    // cout << "Current Neighbors:" << endl;
+    // for (const auto &entry : neighbors)
+    // {
+    //   cout << "Port: " << entry.first
+    //        << ", Neighbor ID: " << entry.second.neighbor_id
+    //        << ", Last Response Time: " << entry.second.last_response_time
+    //        << ", RTT: " << entry.second.rtt << " ms" << endl;
+    // }
 
     // set alarm again
     sys->set_alarm(this, 1000, new int(1));
