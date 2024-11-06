@@ -52,6 +52,7 @@ private:
   unsigned short router_id;                                   // router id
   eProtocolType protocol_type;                                // protocol type
   std::unordered_map<unsigned short, NeighborInfo> neighbors; // port to neighborInfo
+  std::unordered_map<unsigned short, unsigned short> dv_table; // Destination ID to cost
 };
 
 #endif

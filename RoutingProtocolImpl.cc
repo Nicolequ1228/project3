@@ -27,6 +27,13 @@ void RoutingProtocolImpl::init(unsigned short num_ports, unsigned short router_i
   // set neighbor expiration check alarm
   int *expiration_data = new int(1);
   sys->set_alarm(this, 1000, expiration_data); // every 1 s check neighbor expiration
+
+  // set DV update alarm
+  if (protocol_type == P_DV)
+  {
+    int *dv_data = new int(2);
+    sys->set_alarm(this, 30000, dv_data); // every 30 s
+  }
 }
 
 void RoutingProtocolImpl::handle_alarm(void *data)
@@ -86,7 +93,7 @@ void RoutingProtocolImpl::handle_alarm(void *data)
     {
       NeighborInfo &neighbor = it->second;
       if (current_time - neighbor.last_response_time > 15000)
-      {                           // no response more than 15 seconds
+      { // no response more than 15 seconds
         // cout << "Neighbor on port " << it->first << " with ID " << neighbor.neighbor_id << " has timed out and will be removed." << endl;
         it = neighbors.erase(it); // remove expired neighbor
       }
@@ -108,6 +115,49 @@ void RoutingProtocolImpl::handle_alarm(void *data)
 
     // set alarm again
     sys->set_alarm(this, 1000, new int(1));
+  }
+  else if (*alarm_type == 2)
+  { // DV update alarm
+    // create DV packet
+    size_t packet_size = sizeof(uint8_t) * 2 + sizeof(uint16_t) * 3 + dv_table.size() * sizeof(uint16_t) * 2;
+    char *buffer = new char[packet_size];
+    memset(buffer, 0, packet_size);
+
+    uint8_t packet_type = DV;
+    uint8_t reserved = 0;
+    uint16_t size = htons(packet_size);
+    uint16_t source_id = htons(router_id);
+    uint16_t dest_id = htons(0);
+
+    size_t offset = 0;
+    memcpy(buffer + offset, &packet_type, sizeof(packet_type));
+    offset += sizeof(packet_type);
+    memcpy(buffer + offset, &reserved, sizeof(reserved));
+    offset += sizeof(reserved);
+    memcpy(buffer + offset, &size, sizeof(size));
+    offset += sizeof(size);
+    memcpy(buffer + offset, &source_id, sizeof(source_id));
+    offset += sizeof(source_id);
+    memcpy(buffer + offset, &dest_id, sizeof(dest_id));
+
+    // include DV table
+    for (const auto &entry : dv_table)
+    {
+      uint16_t dest = htons(entry.first);
+      uint16_t cost = htons(entry.second);
+      memcpy(buffer + offset, &dest, sizeof(dest));
+      offset += sizeof(dest);
+      memcpy(buffer + offset, &cost, sizeof(cost));
+      offset += sizeof(cost);
+    }
+
+    // send DV to every neighbor
+    for (const auto &neighbor : neighbors)
+    {
+      sys->send(neighbor.second.port, buffer, packet_size);
+    }
+
+    sys->set_alarm(this, 30000, new int(2)); // reset DV alarm
   }
 
   // clear data
@@ -196,6 +246,41 @@ void RoutingProtocolImpl::recv(unsigned short port, void *packet, unsigned short
       // Update existing neighbor information
       neighbors[port].last_response_time = current_time;
       neighbors[port].rtt = rtt;
+    }
+  }
+  else if (packet_type == DV)
+  {
+    uint16_t source_id;
+    memcpy(&source_id, buffer + 4, sizeof(source_id));
+    source_id = ntohs(source_id);
+
+    unsigned short base_cost = neighbors[port].rtt; 
+    bool table_updated = false;
+
+    size_t offset = 8;
+    while (offset < size)
+    {
+      uint16_t dest_id, cost;
+      memcpy(&dest_id, buffer + offset, sizeof(dest_id));
+      memcpy(&cost, buffer + offset + 2, sizeof(cost));
+      dest_id = ntohs(dest_id);
+      cost = ntohs(cost);
+
+      unsigned short total_cost = (cost == INFINITY_COST) ? INFINITY_COST : base_cost + cost;
+
+      // update dv_table cost
+      if (dv_table.find(dest_id) == dv_table.end() || dv_table[dest_id] > total_cost)
+      {
+        dv_table[dest_id] = total_cost;
+        table_updated = true;
+      }
+      offset += 4;
+    }
+
+    // if dv updated, do alarm immediately
+    if (table_updated)
+    {
+      handle_alarm(new int(2));
     }
   }
 
