@@ -55,7 +55,7 @@ void RoutingProtocolImpl::handle_alarm(void *data)
       uint16_t source_id = htons(router_id);
       uint16_t dest_id = htons(0);
       uint32_t timestamp = htonl(current_time);
-      
+
       // memcpy
       size_t offset = 0;
       memcpy(buffer + offset, &packet_type, sizeof(packet_type));
@@ -95,6 +95,16 @@ void RoutingProtocolImpl::handle_alarm(void *data)
       }
     }
 
+    // print neighbors
+    cout << "Current Neighbors:" << endl;
+    for (const auto &entry : neighbors)
+    {
+      cout << "Port: " << entry.first
+           << ", Neighbor ID: " << entry.second.neighbor_id
+           << ", Last Response Time: " << entry.second.last_response_time
+           << ", RTT: " << entry.second.rtt << " ms" << endl;
+    }
+
     // set alarm again
     sys->set_alarm(this, 1000, new int(1));
   }
@@ -123,7 +133,7 @@ void RoutingProtocolImpl::recv(unsigned short port, void *packet, unsigned short
     memcpy(&timestamp, buffer + 8, sizeof(timestamp)); // Offset 8 due to packet header
 
     uint16_t ping_source_id;
-    memcpy(&ping_source_id, buffer + 4, sizeof(ping_source_id)); //get PING source_id
+    memcpy(&ping_source_id, buffer + 4, sizeof(ping_source_id)); // get PING source_id
     ping_source_id = ntohs(ping_source_id);
 
     // Prepare the PONG packet buffer
@@ -136,7 +146,7 @@ void RoutingProtocolImpl::recv(unsigned short port, void *packet, unsigned short
     uint8_t reserved = 0;
     uint16_t pong_size = htons(pong_packet_size);
     uint16_t source_id = htons(router_id);
-    uint16_t dest_id = htons(ping_source_id); 
+    uint16_t dest_id = htons(ping_source_id);
     uint32_t pong_timestamp = timestamp; // Send back the original timestamp
 
     // Copy data into pong_buffer
@@ -164,15 +174,15 @@ void RoutingProtocolImpl::recv(unsigned short port, void *packet, unsigned short
     // Extract the timestamp from the PONG packet
     uint32_t timestamp;
     memcpy(&timestamp, buffer + 8, sizeof(timestamp)); // Offset 8 for packet header
-    timestamp = ntohl(timestamp); // Convert timestamp to host byte order
+    timestamp = ntohl(timestamp);                      // Convert timestamp to host byte order
 
     uint16_t pong_source_id;
     memcpy(&pong_source_id, buffer + 4, sizeof(pong_source_id)); // get PONG source_id
-    pong_source_id = ntohs(pong_source_id); 
+    pong_source_id = ntohs(pong_source_id);
 
     // Calculate RTT using the current time and the received timestamp
     uint32_t current_time = sys->time();
-    uint16_t rtt = current_time - timestamp; 
+    uint16_t rtt = current_time - timestamp;
 
     // Update neighbor information in the neighbors map
     if (neighbors.find(port) == neighbors.end())
