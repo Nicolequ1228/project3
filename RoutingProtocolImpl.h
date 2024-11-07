@@ -8,9 +8,13 @@
 struct NeighborInfo
 {
   unsigned short neighbor_id;
-  unsigned short port;
   unsigned int last_response_time; // last pong received
   unsigned short rtt;
+};
+
+struct DVEntry {
+  unsigned short cost;
+  unsigned short next_hop;
 };
 
 class RoutingProtocolImpl : public RoutingProtocol
@@ -52,7 +56,7 @@ private:
   unsigned short router_id;                                   // router id
   eProtocolType protocol_type;                                // protocol type
   std::unordered_map<unsigned short, NeighborInfo> neighbors; // port to neighborInfo
-  std::unordered_map<unsigned short, unsigned short> dv_table; // Destination ID to cost
+  std::unordered_map<unsigned short, DVEntry> dv_table; // Destination ID to DVEntry
 };
 
 #endif

@@ -20,9 +20,9 @@ void RoutingProtocolImpl::init(unsigned short num_ports, unsigned short router_i
   this->router_id = router_id;
   this->protocol_type = protocol_type;
 
-  // set ping alarm
+  // send ping alarm immediately
   int *ping_data = new int(0);
-  sys->set_alarm(this, 0, ping_data); // every 10 s handle_alarm
+  handle_alarm(ping_data); // and then every 10 s
 
   // set neighbor expiration check alarm
   int *expiration_data = new int(1);
@@ -32,7 +32,7 @@ void RoutingProtocolImpl::init(unsigned short num_ports, unsigned short router_i
   if (protocol_type == P_DV)
   {
     int *dv_data = new int(2);
-    sys->set_alarm(this, 30000, dv_data); // every 30 s
+    handle_alarm(dv_data); // and then every 30 s
   }
 }
 
@@ -96,6 +96,7 @@ void RoutingProtocolImpl::handle_alarm(void *data)
       { // no response more than 15 seconds
         // cout << "Neighbor on port " << it->first << " with ID " << neighbor.neighbor_id << " has timed out and will be removed." << endl;
         it = neighbors.erase(it); // remove expired neighbor
+        dv_table.erase(neighbor.neighbor_id);
       }
       else
       {
@@ -118,46 +119,56 @@ void RoutingProtocolImpl::handle_alarm(void *data)
   }
   else if (*alarm_type == 2)
   { // DV update alarm
-    // create DV packet
-    size_t packet_size = sizeof(uint8_t) * 2 + sizeof(uint16_t) * 3 + dv_table.size() * sizeof(uint16_t) * 2;
-    char *buffer = new char[packet_size];
-    memset(buffer, 0, packet_size);
-
-    uint8_t packet_type = DV;
-    uint8_t reserved = 0;
-    uint16_t size = htons(packet_size);
-    uint16_t source_id = htons(router_id);
-    uint16_t dest_id = htons(0);
-
-    size_t offset = 0;
-    memcpy(buffer + offset, &packet_type, sizeof(packet_type));
-    offset += sizeof(packet_type);
-    memcpy(buffer + offset, &reserved, sizeof(reserved));
-    offset += sizeof(reserved);
-    memcpy(buffer + offset, &size, sizeof(size));
-    offset += sizeof(size);
-    memcpy(buffer + offset, &source_id, sizeof(source_id));
-    offset += sizeof(source_id);
-    memcpy(buffer + offset, &dest_id, sizeof(dest_id));
-
-    // include DV table
-    for (const auto &entry : dv_table)
-    {
-      uint16_t dest = htons(entry.first);
-      uint16_t cost = htons(entry.second);
-      memcpy(buffer + offset, &dest, sizeof(dest));
-      offset += sizeof(dest);
-      memcpy(buffer + offset, &cost, sizeof(cost));
-      offset += sizeof(cost);
-    }
-
-    // send DV to every neighbor
+    // create DV packet for each neighbor (poison reverse)
     for (const auto &neighbor : neighbors)
     {
-      sys->send(neighbor.second.port, buffer, packet_size);
+      unsigned short neighbor_id = neighbor.second.neighbor_id;
+      unsigned short port = neighbor.first;
+
+      size_t packet_size = sizeof(uint8_t) * 2 + sizeof(uint16_t) * 3 + dv_table.size() * sizeof(uint16_t) * 2;
+      char *buffer = new char[packet_size];
+      memset(buffer, 0, packet_size);
+
+      uint8_t packet_type = DV;
+      uint8_t reserved = 0;
+      uint16_t size = htons(packet_size);
+      uint16_t source_id = htons(router_id);
+      uint16_t dest_id = htons(neighbor_id);
+
+      size_t offset = 0;
+      memcpy(buffer + offset, &packet_type, sizeof(packet_type));
+      offset += sizeof(packet_type);
+      memcpy(buffer + offset, &reserved, sizeof(reserved));
+      offset += sizeof(reserved);
+      memcpy(buffer + offset, &size, sizeof(size));
+      offset += sizeof(size);
+      memcpy(buffer + offset, &source_id, sizeof(source_id));
+      offset += sizeof(source_id);
+      memcpy(buffer + offset, &dest_id, sizeof(dest_id));
+
+      for (const auto &entry : dv_table)
+      {
+        uint16_t dest = htons(entry.first);
+        uint16_t cost = htons(entry.second.cost);
+
+        // poison reverse
+        if (entry.second.next_hop == neighbor_id)
+        {
+          cost = htons(INFINITY_COST);
+        }
+
+        memcpy(buffer + offset, &dest, sizeof(dest));
+        offset += sizeof(dest);
+        memcpy(buffer + offset, &cost, sizeof(cost));
+        offset += sizeof(cost);
+      }
+
+      // send
+      sys->send(port, buffer, packet_size);
     }
 
-    sys->set_alarm(this, 30000, new int(2)); // reset DV alarm
+    // set DV alarm
+    sys->set_alarm(this, 30000, new int(2)); // every 30 s
   }
 
   // clear data
@@ -239,13 +250,20 @@ void RoutingProtocolImpl::recv(unsigned short port, void *packet, unsigned short
     if (neighbors.find(port) == neighbors.end())
     {
       // Initialize new neighbor entry if it doesn't exist
-      neighbors[port] = {pong_source_id, port, current_time, rtt};
+      neighbors[port] = {pong_source_id, current_time, rtt};
+      dv_table[pong_source_id] = {rtt, pong_source_id};
+      handle_alarm(new int(2)); // DV update
     }
     else
     {
       // Update existing neighbor information
       neighbors[port].last_response_time = current_time;
       neighbors[port].rtt = rtt;
+      if (dv_table[pong_source_id].cost != rtt) {
+        dv_table[pong_source_id].cost = rtt;
+        dv_table[pong_source_id].next_hop = pong_source_id;
+        handle_alarm(new int(2));
+      }
     }
   }
   else if (packet_type == DV)
@@ -254,7 +272,7 @@ void RoutingProtocolImpl::recv(unsigned short port, void *packet, unsigned short
     memcpy(&source_id, buffer + 4, sizeof(source_id));
     source_id = ntohs(source_id);
 
-    unsigned short base_cost = neighbors[port].rtt; 
+    unsigned short base_cost = neighbors[port].rtt;
     bool table_updated = false;
 
     size_t offset = 8;
@@ -269,9 +287,14 @@ void RoutingProtocolImpl::recv(unsigned short port, void *packet, unsigned short
       unsigned short total_cost = (cost == INFINITY_COST) ? INFINITY_COST : base_cost + cost;
 
       // update dv_table cost
-      if (dv_table.find(dest_id) == dv_table.end() || dv_table[dest_id] > total_cost)
+      if (dv_table.find(dest_id) == dv_table.end() || dv_table[dest_id].cost > total_cost)
       {
-        dv_table[dest_id] = total_cost;
+        dv_table[dest_id] = {total_cost, source_id};
+        table_updated = true;
+      }
+      else if (dv_table[dest_id].next_hop == source_id && dv_table[dest_id].cost != total_cost)
+      {
+        dv_table[dest_id].cost = total_cost;
         table_updated = true;
       }
       offset += 4;
