@@ -180,6 +180,13 @@ void RoutingProtocolImpl::recv(unsigned short port, void *packet, unsigned short
   // add your own code
   char *buffer = static_cast<char *>(packet);
 
+  // if special port, ignore
+  if (port == SPECIAL_PORT)
+  {
+    delete[] buffer;
+    return;
+  }
+
   // Extract packet type from the buffer
   uint8_t packet_type;
   memcpy(&packet_type, buffer, sizeof(packet_type));
@@ -259,7 +266,8 @@ void RoutingProtocolImpl::recv(unsigned short port, void *packet, unsigned short
       // Update existing neighbor information
       neighbors[port].last_response_time = current_time;
       neighbors[port].rtt = rtt;
-      if (dv_table[pong_source_id].cost != rtt) {
+      if (dv_table[pong_source_id].cost != rtt)
+      {
         dv_table[pong_source_id].cost = rtt;
         dv_table[pong_source_id].next_hop = pong_source_id;
         handle_alarm(new int(2));
@@ -287,15 +295,20 @@ void RoutingProtocolImpl::recv(unsigned short port, void *packet, unsigned short
       unsigned short total_cost = (cost == INFINITY_COST) ? INFINITY_COST : base_cost + cost;
 
       // update dv_table cost
-      if (dv_table.find(dest_id) == dv_table.end() || dv_table[dest_id].cost > total_cost)
+      auto it = dv_table.find(dest_id);
+      if (it == dv_table.end())
       {
         dv_table[dest_id] = {total_cost, source_id};
         table_updated = true;
+        cout << "New path to " << dest_id << " via " << source_id << " with cost " << total_cost << endl;
       }
-      else if (dv_table[dest_id].next_hop == source_id && dv_table[dest_id].cost != total_cost)
+      else if (it->second.cost > total_cost || (it->second.next_hop == source_id && it->second.cost != total_cost))
       {
-        dv_table[dest_id].cost = total_cost;
+        cout << "old cost: " << it->second.cost << endl;
+        it->second.cost = total_cost;
+        it->second.next_hop = source_id;
         table_updated = true;
+        cout << "Updated path to " << dest_id << " via " << source_id << " with new cost " << total_cost << endl;
       }
       offset += 4;
     }
