@@ -254,23 +254,26 @@ void RoutingProtocolImpl::recv(unsigned short port, void *packet, unsigned short
     uint16_t rtt = current_time - timestamp;
 
     // Update neighbor information in the neighbors map
-    if (neighbors.find(port) == neighbors.end())
+    if (pong_source_id != router_id)
     {
-      // Initialize new neighbor entry if it doesn't exist
-      neighbors[port] = {pong_source_id, current_time, rtt};
-      dv_table[pong_source_id] = {rtt, pong_source_id};
-      handle_alarm(new int(2)); // DV update
-    }
-    else
-    {
-      // Update existing neighbor information
-      neighbors[port].last_response_time = current_time;
-      neighbors[port].rtt = rtt;
-      if (dv_table[pong_source_id].cost != rtt)
+      if (neighbors.find(port) == neighbors.end())
       {
-        dv_table[pong_source_id].cost = rtt;
-        dv_table[pong_source_id].next_hop = pong_source_id;
-        handle_alarm(new int(2));
+        // Initialize new neighbor entry if it doesn't exist
+        neighbors[port] = {pong_source_id, current_time, rtt};
+        dv_table[pong_source_id] = {rtt, pong_source_id};
+        handle_alarm(new int(2)); // DV update
+      }
+      else
+      {
+        // Update existing neighbor information
+        neighbors[port].last_response_time = current_time;
+        neighbors[port].rtt = rtt;
+        if (dv_table[pong_source_id].cost != rtt)
+        {
+          dv_table[pong_source_id].cost = rtt;
+          dv_table[pong_source_id].next_hop = pong_source_id;
+          handle_alarm(new int(2));
+        }
       }
     }
   }
@@ -291,6 +294,13 @@ void RoutingProtocolImpl::recv(unsigned short port, void *packet, unsigned short
       memcpy(&cost, buffer + offset + 2, sizeof(cost));
       dest_id = ntohs(dest_id);
       cost = ntohs(cost);
+
+      if (dest_id == router_id)
+      {
+        std::cout << "Ignoring self-loop entry in DV update for router " << router_id << std::endl;
+        offset += 4;
+        continue;
+      }
 
       unsigned short total_cost = (cost == INFINITY_COST) ? INFINITY_COST : base_cost + cost;
 
